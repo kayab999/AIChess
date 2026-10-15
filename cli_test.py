@@ -28,7 +28,7 @@ def main():
         print(f"[splash: {SPLASH.name} — {SPLASH.stat().st_size // 1024} KB]")
     if ICON.exists():
         print(f"[icono: {ICON.name} — {ICON.stat().st_size // 1024} KB]")
-    print("Comandos: [movimiento e4/Nf3/e2e4] | hint [1|2|3] | explain | coach on/off | color on/off | pgn | save [ruta] | load <ruta> | games | svg [blancas|negras] | png [blancas|negras] [tamaño] | viewer [refresh] | 3d [estilo] | personalities | personality <key> | history | opening | status | moves | analyze | undo | resign | quit\n")
+    print("Comandos: [movimiento e4/Nf3/e2e4] | hint [1|2|3] | explain | coach on/off | color on/off | pgn | save [ruta] | load <ruta> | games | svg [blancas|negras] | png [blancas|negras] [tamaño] | viewer [refresh] | 3d [estilo] | claim | personalities | personality <key> | history | opening | status | moves | analyze | undo | resign | quit\n")
 
     engine = ChessEngine(elo=1600)
     use_color = sys.stdout.isatty()
@@ -42,7 +42,7 @@ def main():
             show_board(state)
             print(f"Turno: {state['turn']} | Estado: {state['status']}")
 
-            if state["status"] in ("checkmate", "stalemate", "draw", "resigned"):
+            if state["status"] in ("checkmate", "stalemate", "draw", "resigned", "finished"):
                 print(f"Partida terminada: {state['result']}")
                 break
 
@@ -56,7 +56,17 @@ def main():
             if low in ("quit", "exit", "q"):
                 break
             if low == "undo":
-                engine.undo()
+                res = engine.undo()
+                if "error" in res:
+                    print(f"❌ {res['error']}")
+                continue
+            if low == "claim":
+                res = engine.claim_draw()
+                if "error" in res:
+                    print(f"❌ {res['error']}")
+                else:
+                    print(f"🤝 Tablas por {res.get('claim', '?')}")
+                    break
                 continue
             if low.startswith("hint"):
                 parts = cmd.split()

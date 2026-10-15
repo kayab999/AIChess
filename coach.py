@@ -47,13 +47,16 @@ _PIECE_NAMES = {
 
 def detect_hanging(board: chess.Board, color: chess.Color) -> list[str]:
     """
-    Piezas propias (no peones) atacadas con más atacantes rivales que defensores.
+    Piezas propias (sin peones ni rey) con más atacantes rivales que defensores.
+    Heurística: no ve clavadas ni táctica profunda.
     """
     hanging: list[str] = []
     opponent = not color
     for square in chess.SQUARES:
         piece = board.piece_at(square)
-        if not piece or piece.color != color or piece.piece_type == chess.PAWN:
+        if not piece or piece.color != color:
+            continue
+        if piece.piece_type in (chess.PAWN, chess.KING):
             continue
         attackers = len(board.attackers(opponent, square))
         if attackers == 0:
@@ -65,10 +68,32 @@ def detect_hanging(board: chess.Board, color: chess.Color) -> list[str]:
     return hanging
 
 
+def detect_lesser_attack(board: chess.Board, color: chess.Color) -> list[str]:
+    """Pieza atacada por alguna rival de menor valor (aviso, aunque esté defendida)."""
+    values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
+              chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 100}
+    warnings: list[str] = []
+    opponent = not color
+    for square in chess.SQUARES:
+        piece = board.piece_at(square)
+        if not piece or piece.color != color:
+            continue
+        if piece.piece_type in (chess.PAWN, chess.KING):
+            continue
+        for atk in board.attackers(opponent, square):
+            ap = board.piece_at(atk)
+            if ap and values[ap.piece_type] < values[piece.piece_type]:
+                name = _PIECE_NAMES.get(piece.piece_type, "pieza")
+                warnings.append(
+                    f"{name} en {chess.square_name(square)} bajo ataque de pieza menor")
+                break
+    return warnings
+
+
 def detect_development(board: chess.Board, move_number: int, color: chess.Color) -> list[str]:
-    """Problemas de desarrollo en apertura (jugadas < 10)."""
+    """Problemas de desarrollo en apertura (jugadas 4-9; antes es ruido)."""
     motifs: list[str] = []
-    if move_number >= 10:
+    if move_number < 4 or move_number >= 10:
         return motifs
 
     knight_starts = [chess.B1, chess.G1] if color == chess.WHITE else [chess.B8, chess.G8]
@@ -110,6 +135,7 @@ def current_motifs(board: chess.Board, move_number: int, color: chess.Color) -> 
     """Todos los motivos actuales para una posición (usado por hints)."""
     motifs: list[str] = []
     motifs.extend(detect_hanging(board, color))
+    motifs.extend(detect_lesser_attack(board, color))
     motifs.extend(detect_development(board, move_number, color))
     motifs.extend(detect_king_safety(board, color))
     return motifs
@@ -136,9 +162,10 @@ def explain(move_san: str, cp_loss: float, motifs: list[str], veredicto: str) ->
     return f"Blunder en {move_san}.{motive}{detail}"
 
 
-def hint_level(motifs: list[str], level: int, best_move: Optional[str], evaluation: str) -> str:
+def hint_level(motifs: list[str], level: int, best_move: Optional[str],
+               evaluation: str, dest_square: Optional[str] = None) -> str:
     """
-    Nivel 1: idea general. Nivel 2: zona. Nivel 3: jugada exacta.
+    Nivel 1: idea general. Nivel 2: zona (casilla destino real). Nivel 3: jugada exacta.
     """
     level = max(1, min(3, level))
     text = " ".join(motifs)
@@ -151,8 +178,14 @@ def hint_level(motifs: list[str], level: int, best_move: Optional[str], evaluati
             return "Mejora la seguridad de tu rey (enroca pronto)."
         return "Controla el centro y coordina tus piezas antes de atacar."
     if level == 2:
-        if best_move and len(best_move) >= 2:
-            return f"Mira la zona de {best_move[-2:]} como candidata."
+        target = dest_square
+        if not target and best_move and len(best_move) >= 2:
+            # Fallback SAN: últimas 2 letras solo si parecen casilla
+            tail = best_move[-2:]
+            if len(tail) == 2 and tail[0] in "abcdefgh" and tail[1] in "12345678":
+                target = tail
+        if target:
+            return f"Mira la zona de {target} como candidata."
         return "Busca jugadas que mejoren tu control central."
     if best_move:
         return f"Juega {best_move} (eval: {evaluation})."
@@ -177,17 +210,28 @@ def evaluate_move(
     cp_loss positiva = el que movió empeoró.
     """
     mover = board_before.turn
+    # Mate dado: veredicto especial, sin pérdidas absurdas en peones.
+    if board_after.is_checkmate():
+        return {
+            "veredicto": "mate",
+            "emoji": "🏁",
+            "cp_loss": 0.0,
+            "motivos": [],
+            "consejo": f"¡Jaque mate con {move_san}! Partida redonda.",
+            "best_move": best_move,
+        }
+
     if mover == chess.WHITE:
         cp_loss = (eval_before - eval_after) * 100.0
     else:
         cp_loss = (eval_after - eval_before) * 100.0
 
-    mate_lost = (abs(eval_before) >= 9000) and (abs(eval_after) < 9000)
-    # Si quien movía tenía mate a favor y lo pierde, es grave aunque cp parezca raro
-    if mate_lost and eval_before * (1 if mover == chess.WHITE else -1) > 0:
-        pass  # tenía mate y lo perdió -> grave
-    elif mate_lost:
-        mate_lost = False  # el rival tenía mate, no aplica
+    # Solo es "grave" si quien movía tenía el mate a favor y lo dejó escapar.
+    had_mate = abs(eval_before) >= 9000
+    still_mate = abs(eval_after) >= 9000
+    mate_lost = had_mate and not still_mate and (
+        eval_before * (1 if mover == chess.WHITE else -1) > 0
+    )
 
     veredicto, emoji = classify_loss(cp_loss, mate_lost)
     motifs = current_motifs(board_after, move_number, mover)

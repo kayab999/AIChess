@@ -31,6 +31,14 @@ __REFRESH_META__
 </head>
 <body>
 <div id="splash"><img src="../assets/splash.png" alt="AI Chess"></div>
+<script>
+// El splash solo tapa en la primera carga; los auto-refresh lo saltan.
+try { if (sessionStorage.getItem('aichess_seen')) {
+  document.getElementById('splash').style.display = 'none';
+} else {
+  sessionStorage.setItem('aichess_seen', '1');
+} } catch (e) {}
+</script>
 <div id="scene"></div>
 <div id="hud">
   <h1>♟️ AI Chess 3D · __STYLE__</h1>

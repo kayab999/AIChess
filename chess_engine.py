@@ -23,6 +23,7 @@ from personalities import (
 )
 
 GAMES_DIR = Path(__file__).parent / "games"
+BOARDS_DIR = Path(__file__).parent / "boards"
 
 from coach import (
     current_motifs,
@@ -52,13 +53,83 @@ MAX_ELO = 3190
 
 
 def find_engine() -> str:
-    """Busca el binario de Stockfish en rutas comunes."""
+    """Busca Stockfish: STOCKFISH_PATH, PATH y rutas comunes."""
+    import os
+    env = os.environ.get("STOCKFISH_PATH", "")
+    if env and Path(env).exists():
+        return env
     for path in DEFAULT_ENGINE_PATHS:
         if path and Path(path).exists():
             return path
     raise FileNotFoundError(
-        "Stockfish no encontrado. Instálalo con: sudo apt install stockfish"
+        "Stockfish no encontrado (se necesita 12+ para UCI_Elo). "
+        "Instálalo con: sudo apt install stockfish "
+        "o define STOCKFISH_PATH=/ruta/a/stockfish"
     )
+
+
+def _elo_strength_factor(elo: int) -> float:
+    """1320 -> ~2.1 (errático), 1600 -> ~1.7, 2200 -> 0.67, 2600+ -> 0.4.
+
+    Escala temperature/blunder del muestreo para que el ELO sea real
+    (Stockfish ignora UCI_Elo en analyse/MultiPV).
+    """
+    return max(0.4, min(2.5, (2600 - elo) / 600.0))
+
+
+def _elo_blunder_bonus(elo: int) -> float:
+    return max(0.0, (1700 - elo)) / 5000.0
+
+
+def pov_cp(score, turn: chess.Color) -> float:
+    """Score UCI -> centipeones relativos al bando que mueve (mate=±100000)."""
+    if score is None:
+        return 0.0
+    try:
+        pov = score.pov(turn)
+    except AttributeError:
+        pov = score
+    if pov.is_mate():
+        m = pov.mate() or 0
+        return 100000.0 if m > 0 else -100000.0
+    return float(pov.score() or 0)
+
+
+def _is_empty_game(game: "chess.pgn.Game") -> bool:
+    """El parser fabrica headers por defecto ante basura: sin datos reales ni
+    jugadas, no hay partida."""
+    try:
+        has_moves = any(True for _ in game.mainline_moves())
+    except (ValueError, IndexError):
+        return True
+    if has_moves:
+        return False
+    return all(v in ("?", "*", "????.??.??", "") for v in game.headers.values())
+
+
+def sandboxed(base: Path, name: Optional[str], suffix: str, auto_prefix: str) -> Path:
+    """Resuelve un nombre de fichero estrictamente dentro de base.
+
+    Rechaza rutas absolutas, subdirectorios y `..` (incluye enlaces
+    simbólicos vía resolve()). Solo para escritura/lectura del proyecto.
+    """
+    import datetime
+    base.mkdir(parents=True, exist_ok=True)
+    based = base.resolve()
+    if name:
+        p = Path(name)
+        if p.is_absolute() or p.parent != Path(".") or ".." in p.parts:
+            raise ValueError(f"Ruta no permitida (solo ficheros en {base.name}/): {name!r}")
+        dest = (based / p.name).resolve()
+    else:
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        dest = (based / f"{auto_prefix}-{stamp}{suffix}").resolve()
+    if dest.parent != based or dest.suffix != suffix:
+        if dest.suffix != suffix:
+            dest = dest.with_suffix(suffix)
+        if dest.parent != based:
+            raise ValueError(f"Ruta no permitida (solo ficheros en {base.name}/): {name!r}")
+    return dest
 
 
 # ---------------------------------------------------------------------------
@@ -69,10 +140,13 @@ def find_engine() -> str:
 class GameState:
     """Estado serializable de una partida."""
     board_fen: str = chess.STARTING_FEN
+    root_fen: str = chess.STARTING_FEN  # posición inicial (estándar o FEN importado)
     moves_history: list[str] = field(default_factory=list)  # SAN
     elo: int = DEFAULT_ELO
-    status: str = "in_progress"  # in_progress | check | checkmate | stalemate | draw | resigned
-    result: Optional[str] = None  # "1-0", "0-1", "1/2-1/2"
+    # in_progress | check | checkmate | stalemate | draw | resigned | finished
+    # finished = terminada importada sin causa de tablero (abandono/tablas acuerdo)
+    status: str = "in_progress"
+    result: Optional[str] = None  # "1-0", "0-1", "1/2-1/2"; None = partida activa
 
     def to_dict(self) -> dict:
         return {
@@ -110,6 +184,7 @@ class ChessEngine:
             self._set_elo(elo)
         self.board: chess.Board = chess.Board()
         self.state = GameState(elo=self.elo)
+        self._resigned = False  # abandono propio: sticky hasta undo/reset/load
         # Modo entrenador
         self.coach_enabled = True
         self.last_coach_feedback: Optional[dict] = None
@@ -142,39 +217,65 @@ class ChessEngine:
     # -----------------------------------------------------------------------
 
     def reset(self, elo: Optional[int] = None, personality: Optional[str] = None) -> dict:
-        """Reinicia la partida. Opcionalmente cambia ELO y/o personalidad."""
+        """Reinicia la partida. La personalidad fija su ELO; un elo explícito lo sobrescribe."""
         if personality:
             self.set_personality(personality)
         if elo is not None:
             self._set_elo(elo)
         self.board = chess.Board()
         self.state = GameState(elo=self.elo)
+        self._resigned = False
         self.last_coach_feedback = None
         self.hint_counter = {}
         return self.get_state()
 
     def resign(self) -> dict:
         """El jugador abandona la partida."""
-        if not self._is_game_over():
-            self.state.status = "resigned"
-            self.state.result = "0-1"
+        if self._is_game_over():
+            return {"error": "La partida ya terminó", **self.get_state()}
+        self._resigned = True
+        self.state.status = "resigned"
+        self.state.result = "0-1"
+        self.state.board_fen = self.board.fen()
         return self.get_state()
 
     def undo(self) -> dict:
-        """Deshace la última jugada completa (jugador + bot)."""
-        if len(self.board.move_stack) >= 2:
-            self.board.pop()
-            self.board.pop()
+        """Deshace la última ronda (jugador+bot; 1 ply si el jugador dio mate).
+        Tras un abandono, reabre la posición tal cual sin retirar jugadas."""
+        if self._resigned:
+            self._resigned = False
             self._rebuild_history()
-        elif len(self.board.move_stack) == 1:
+            self.last_coach_feedback = None
+            return self.get_state()
+        if not self.board.move_stack:
+            return {"error": "Nada que deshacer", **self.get_state()}
+        popped = 0
+        while self.board.move_stack and (popped == 0 or self.board.turn != chess.WHITE):
             self.board.pop()
-            self._rebuild_history()
+            popped += 1
+        self._rebuild_history()
         self.last_coach_feedback = None
         return self.get_state()
 
+    def claim_draw(self) -> dict:
+        """Reclama tablas (triple repetición o 50 movimientos)."""
+        reasons = []
+        if self.board.can_claim_threefold_repetition():
+            reasons.append("triple repetición")
+        if self.board.can_claim_fifty_moves():
+            reasons.append("regla de los 50 movimientos")
+        if not reasons:
+            return {"error": "No hay reclamación disponible", **self.get_state()}
+        self.state.status = "draw"
+        self.state.result = "1/2-1/2"
+        self.state.board_fen = self.board.fen()
+        result = self.get_state()
+        result["claim"] = " y ".join(reasons)
+        return result
+
     def _rebuild_history(self) -> None:
-        """Reconstruye el historial SAN tras un undo."""
-        temp_board = chess.Board()
+        """Reconstruye el historial SAN desde la posición raíz."""
+        temp_board = chess.Board(self.state.root_fen)
         history = []
         for move in self.board.move_stack:
             history.append(temp_board.san(move))
@@ -189,6 +290,11 @@ class ChessEngine:
 
     def _quick_eval(self) -> tuple[Optional[float], Optional[str]]:
         """Evaluación rápida acotada (coach). Returns (eval_pawns_white, best_san)."""
+        if self.board.is_checkmate():
+            winner_white = self.board.turn == chess.BLACK
+            return (10000.0 if winner_white else -10000.0), None
+        if self.board.is_game_over():
+            return 0.0, None
         try:
             info = self.engine.analyse(
                 self.board, chess.engine.Limit(time=0.3, depth=10)
@@ -207,7 +313,7 @@ class ChessEngine:
                 except (ValueError, chess.IllegalMoveError):
                     best_san = None
             return evaluation, best_san
-        except Exception:
+        except chess.engine.EngineError:
             return None, None
 
     def player_move(self, move_str: str) -> dict:
@@ -218,6 +324,8 @@ class ChessEngine:
         """
         if self._is_game_over():
             return {"error": "La partida ya terminó", **self.get_state()}
+        if self.board.turn != chess.WHITE:
+            return {"error": "No es tu turno (juegas blancas)", **self.get_state()}
 
         move_str = move_str.strip()
         move = self._parse_move(move_str)
@@ -269,12 +377,17 @@ class ChessEngine:
                 result["coach"] = coach_feedback
             return result
 
-        # Respuesta del bot
+        # Respuesta del bot (transaccional: si falla, se revierte tu jugada)
         bot_move = self._get_bot_move()
-        if bot_move:
-            bot_san = self.board.san(bot_move)
-            self.board.push(bot_move)
-            self.state.moves_history.append(bot_san)
+        if bot_move is None:
+            self.board.pop()
+            self.state.moves_history.pop()
+            self._update_status()
+            return {"error": "El motor no respondió; tu jugada se ha revertido",
+                    **self.get_state()}
+        bot_san = self.board.san(bot_move)
+        self.board.push(bot_move)
+        self.state.moves_history.append(bot_san)
 
         self._update_status()
         result = self.get_state()
@@ -301,21 +414,21 @@ class ChessEngine:
 
     @staticmethod
     def _pov_cp(score, turn: chess.Color) -> float:
-        """Score UCI -> centipeones relativos al bando que mueve (mate=±100000)."""
-        if score is None:
-            return 0.0
-        try:
-            pov = score.pov(turn)
-        except AttributeError:
-            pov = score
-        if pov.is_mate():
-            m = pov.mate() or 0
-            return 100000.0 if m > 0 else -100000.0
-        return float(pov.score() or 0) / 1.0
+        """Compat: ver pov_cp() a nivel de módulo."""
+        return pov_cp(score, turn)
 
     def _get_bot_move(self) -> Optional[chess.Move]:
         """Jugada del bot según su personalidad (repertorio + muestreo con estilo)."""
+        import dataclasses
         p = self.personality
+        # El ELO escala el muestreo (analyse ignora UCI_Elo): a menor ELO,
+        # más temperatura y más blunders. Medible en tests.
+        factor = _elo_strength_factor(self.elo)
+        eff = dataclasses.replace(
+            p,
+            temperature=p.temperature * factor,
+            blunder_rate=min(0.6, p.blunder_rate + _elo_blunder_bonus(self.elo)),
+        )
         # 1. Repertorio de aperturas
         san = book_move(self.state.moves_history, p.openings, self._rng)
         if san:
@@ -325,12 +438,12 @@ class ChessEngine:
                     return candidate
             except (ValueError, chess.InvalidMoveError, chess.IllegalMoveError):
                 pass
-        # 2. Muestreo MultiPV con estilo
+        # 2. Muestreo MultiPV con estilo (parámetros efectivos por ELO)
         try:
             infos = self.engine.analyse(
                 self.board,
-                chess.engine.Limit(time=p.time_limit),
-                multipv=max(1, p.top_k),
+                chess.engine.Limit(time=eff.time_limit),
+                multipv=max(1, eff.top_k),
             )
             if isinstance(infos, dict):
                 infos = [infos]
@@ -341,7 +454,7 @@ class ChessEngine:
                     continue
                 candidates.append((pv[0], self._pov_cp(info.get("score"), self.board.turn)))
             if candidates:
-                pick = choose_move(self.board, candidates, p, self._rng)
+                pick = choose_move(self.board, candidates, eff, self._rng)
                 if pick in self.board.legal_moves:
                     return pick
         except chess.engine.EngineError:
@@ -366,10 +479,13 @@ class ChessEngine:
             return {"error": "La partida terminó, no hay nada que analizar"}
 
         depth = max(5, min(30, depth))
-        info = self.engine.analyse(
-            self.board,
-            chess.engine.Limit(depth=depth),
-        )
+        try:
+            info = self.engine.analyse(
+                self.board,
+                chess.engine.Limit(depth=depth),
+            )
+        except chess.engine.EngineError as exc:
+            return {"error": f"El motor no respondió: {exc}"}
         score = info["score"].white()
 
         if score.is_mate():
@@ -439,7 +555,14 @@ class ChessEngine:
 
         move_number = len(self.state.moves_history) // 2 + 1
         motifs = current_motifs(self.board, move_number, self.board.turn)
-        text = hint_level(motifs, level, info.get("best_move"), info.get("evaluation", ""))
+        best_san = info.get("best_move")
+        dest = None
+        if best_san:
+            try:
+                dest = chess.square_name(self.board.parse_san(best_san).to_square)
+            except (ValueError, chess.InvalidMoveError, chess.IllegalMoveError):
+                dest = None
+        text = hint_level(motifs, level, best_san, info.get("evaluation", ""), dest)
 
         return {
             "level": level,
@@ -478,9 +601,13 @@ class ChessEngine:
         game.headers["Date"] = date.today().strftime("%Y.%m.%d")
         game.headers["White"] = "Jugador"
         game.headers["Black"] = f"Stockfish {self.personality.name} ELO {self.elo}"
+        game.headers["BlackPersonality"] = self.personality_key
+        if self.state.root_fen != chess.STARTING_FEN:
+            game.headers["SetUp"] = "1"
+            game.headers["FEN"] = self.state.root_fen
         game.headers["Result"] = self.state.result or "*"
         node = game
-        board = chess.Board()
+        board = chess.Board(self.state.root_fen)
         for san in self.state.moves_history:
             try:
                 move = board.parse_san(san)
@@ -492,52 +619,50 @@ class ChessEngine:
         return game.accept(exporter)
 
     def save_game(self, path: Optional[str] = None) -> dict:
-        """Guarda la partida en games/. Auto-nombre si no se da ruta. Devuelve path."""
-        import datetime
-        GAMES_DIR.mkdir(parents=True, exist_ok=True)
-        if path:
-            dest = Path(path)
-            if not dest.is_absolute():
-                dest = GAMES_DIR / dest
-        else:
-            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-            dest = GAMES_DIR / f"ai-chess-{stamp}.pgn"
-        if dest.suffix != ".pgn":
-            dest = dest.with_suffix(".pgn")
+        """Guarda la partida en games/ (solo ese directorio). Devuelve path."""
+        dest = sandboxed(GAMES_DIR, path, ".pgn", "ai-chess")
         dest.write_text(self.to_pgn(), encoding="utf-8")
         return {"path": str(dest), "moves": len(self.state.moves_history)}
 
     def load_game(self, path: str) -> dict:
-        """Carga la primera partida de un PGN y restaura tablero + historial + estado."""
-        src = Path(path)
-        if not src.is_absolute():
-            cand = GAMES_DIR / src
-            if cand.exists():
-                src = cand
+        """Carga la primera partida de un PGN de games/ y restaura el estado."""
+        try:
+            src = sandboxed(GAMES_DIR, path, ".pgn", "ai-chess")
+        except ValueError as exc:
+            return {"error": str(exc), **self.get_state()}
         if not src.exists():
-            return {"error": f"Archivo no encontrado: {path}", **self.get_state()}
+            return {"error": f"Archivo no encontrado en games/: {path}", **self.get_state()}
         try:
             with open(src, encoding="utf-8") as f:
                 game = chess.pgn.read_game(f)
+            if game is None or _is_empty_game(game):
+                return {"error": f"Sin partidas en: {src}", **self.get_state()}
+            board = game.board()
+            history: list[str] = []
+            for move in game.mainline_moves():
+                try:
+                    history.append(board.san(move))
+                except (ValueError, chess.IllegalMoveError):
+                    break
+                board.push(move)
         except (OSError, ValueError) as exc:
             return {"error": f"PGN ilegible: {exc}", **self.get_state()}
-        if game is None:
-            return {"error": f"Sin partidas en: {src}", **self.get_state()}
-
-        board = game.board()
-        history: list[str] = []
-        for move in game.mainline_moves():
-            try:
-                history.append(board.san(move))
-            except (ValueError, chess.IllegalMoveError):
-                break
-            board.push(move)
 
         self.board = board
         self.state = GameState(elo=self.elo)
+        self.state.root_fen = game.headers.get("FEN", chess.STARTING_FEN)
         self.state.moves_history = history
+        self._resigned = False
         self.last_coach_feedback = None
         self.hint_counter = {}
+        # Personalidad rival si el PGN la trae (nuestros exports)
+        bkey = game.headers.get("BlackPersonality", "")
+        if bkey:
+            try:
+                self.set_personality(bkey)
+                self.state.elo = self.elo
+            except KeyError:
+                pass
         # ELO rival si viene en el header Black "Stockfish ELO 1700"
         black = game.headers.get("Black", "")
         if "ELO" in black:
@@ -547,10 +672,12 @@ class ChessEngine:
             except (ValueError, IndexError):
                 pass
         self._update_status()
-        # Si el PGN trae resultado y la posición no es terminal, respetarlo
+        # Resultado importado sin causa de tablero (abandono, acuerdo): estado finished
         res = game.headers.get("Result", "*")
         if res in ("1-0", "0-1", "1/2-1/2") and self.state.result is None:
+            self.state.status = "finished"
             self.state.result = res
+            self.state.board_fen = self.board.fen()
         result = self.get_state()
         result["loaded_from"] = str(src)
         return result
@@ -723,6 +850,9 @@ class ChessEngine:
     # -----------------------------------------------------------------------
 
     def _is_game_over(self) -> bool:
+        # Invariante: solo in_progress/check están activos; todo lo demás es terminal.
+        if self.state.status not in ("in_progress", "check"):
+            return True
         b = self.board
         return (
             b.is_checkmate()
@@ -730,11 +860,16 @@ class ChessEngine:
             or b.is_insufficient_material()
             or b.is_seventyfive_moves()
             or b.is_fivefold_repetition()
-            or self.state.status == "resigned"
         )
 
     def _update_status(self) -> None:
-        if self.state.status == "resigned":
+        # Invariante: result solo vive en estado terminal.
+        if self._resigned:
+            self.state.status = "resigned"
+            self.state.result = "0-1"
+            self.state.board_fen = self.board.fen()
+            return
+        if self.state.status == "finished":
             self.state.board_fen = self.board.fen()
             return
         b = self.board
@@ -750,8 +885,10 @@ class ChessEngine:
             self.state.result = "1/2-1/2"
         elif b.is_check():
             self.state.status = "check"
+            self.state.result = None
         else:
             self.state.status = "in_progress"
+            self.state.result = None
         self.state.board_fen = b.fen()
 
     def close(self) -> None:

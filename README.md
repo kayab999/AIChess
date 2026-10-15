@@ -10,15 +10,20 @@ Juega al ajedrez contra Stockfish 16 desde terminal o desde cualquier agente com
 ## Requisitos
 
 - Python 3.10+ (probado en 3.13.3)
-- Stockfish (`sudo apt install stockfish` — detectado en `/usr/games/stockfish` y `/usr/bin/stockfish`)
+- Stockfish 12+ (`sudo apt install stockfish`; `UCI_Elo` requiere 12+. Si está en
+  otra ruta o con otro gestor, define `STOCKFISH_PATH=/ruta/a/stockfish` —
+  imprescindible con clientes MCP de PATH reducido como Claude Desktop)
+- Para PNG: `libcairo2` a nivel de sistema (`sudo apt install libcairo2`)
 - venv + pip
 
 ## Instalación
 
 ```bash
-cd "AI Chess"
+git clone https://github.com/kayab999/AIChess && cd AIChess
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+# suite de regresión (37+ tests):
+.venv/bin/pip install -r requirements-dev.txt && .venv/bin/python -m pytest tests/ -q
 ```
 
 ## Test rápido (sin MCP)
@@ -41,8 +46,9 @@ Registro en cliente MCP (Claude Desktop / genérico):
 {
   "mcpServers": {
     "ai-chess": {
-      "command": "/home/carlos/AI Chess/.venv/bin/python",
-      "args": ["/home/carlos/AI Chess/chess_mcp_server.py"]
+      "command": "/ruta/a/AIChess/.venv/bin/python",
+      "args": ["/ruta/a/AIChess/chess_mcp_server.py"],
+      "env": { "STOCKFISH_PATH": "/usr/games/stockfish" }
     }
   }
 }
@@ -58,16 +64,17 @@ Registro en cliente MCP (Claude Desktop / genérico):
 | `get_board(color=false)` | Tablero Unicode; `color=true` da ANSI (casillas, última jugada, jaque) |
 | `get_status` | Turno, jaque, resultado, historial |
 | `get_legal_moves` | Legales en SAN |
-| `undo` | Deshace jugada completa |
+| `undo` | Deshace la última ronda (reabre tras mate/abandono) |
 | `resign` | Abandona (0-1) |
+| `claim_draw` | Reclama tablas (triple repetición / 50 jugadas) |
 | `analyze(depth=15)` | Evaluación + mejor jugada |
 | `hint(level=1)` | Pista 1=idea, 2=zona, 3=exacta (auto-escala) |
 | `explain_move` | Veredicto + pérdida + consejo última jugada |
 | `coach_status` | Colgadas, desarrollo, seguridad rey |
 | `toggle_coach(enabled)` | Activa/desactiva feedback automático |
 | `export_pgn` | Partida actual en PGN estándar |
-| `save_game(path="")` | Guarda en `games/` (auto-nombre con fecha) |
-| `load_game(path)` | Carga PGN y restaura tablero |
+| `save_game(path="")` | Guarda en `games/` (sandbox: solo nombres, auto-nombre con fecha) |
+| `load_game(path)` | Carga PGN de `games/` y restaura tablero |
 | `list_games` | Lista partidas en `games/` |
 | `get_board_svg(orientation="blancas")` | Tablero 2D SVG en `boards/`, devuelve ruta |
 | `save_board_image(path="", orientation="blancas")` | Guarda SVG en ruta dada o auto-nombre |
@@ -83,6 +90,9 @@ Registro en cliente MCP (Claude Desktop / genérico):
 | `get_board_3d(style="clasico")` | Visor 3D animado en `boards/viewer3d-<estilo>.html` |
 
 El usuario juega blancas, el bot negras. ELO default 1600. Coach activo por defecto.
+El ELO es real: escala el muestreo con estilo (temperature/blunder), porque
+Stockfish ignora `UCI_Elo` en análisis MultiPV. Invariante de estado: `result`
+solo existe en partida terminada; `undo`/`load`/`claim` la reconcilian siempre.
 
 ## Modo entrenador 🎓
 
@@ -99,7 +109,7 @@ fetch_classics.py    # Descarga data/classics/ (reproducible)
 viewer3d.py          # Genera el visor 3D con la partida embebida
 assets3d/            # three.js vendorizado + pieces.js + board3d.js + plantilla
 chess_engine.py      # Núcleo python-chess + Stockfish (sin MCP)
-chess_mcp_server.py  # MCPServer 2.x, 28 tools, stdio
+chess_mcp_server.py  # MCPServer 2.x, 29 tools, stdio (claim_draw incluido)
 tournament.py        # Round-robin entre personalidades
 cli_test.py          # CLI con banner + referencia a splash/icono
 games/               # Partidas PGN guardadas

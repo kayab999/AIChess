@@ -12,8 +12,8 @@ from typing import Optional
 import chess
 import chess.svg
 
+from chess_engine import BOARDS_DIR, sandboxed
 
-BOARDS_DIR = Path(__file__).parent / "boards"
 
 DEFAULT_PNG_SIZE = 960
 MIN_PNG_SIZE = 256
@@ -86,19 +86,9 @@ def save_board_png(
     orientation: str = "blancas",
     size: int = DEFAULT_PNG_SIZE,
 ) -> dict:
-    """Guarda el PNG en boards/. Auto-nombre si no se da ruta."""
-    import datetime
+    """Guarda el PNG en boards/ (solo ese directorio)."""
     size = clamp_size(size)
-    BOARDS_DIR.mkdir(parents=True, exist_ok=True)
-    if path:
-        dest = Path(path)
-        if not dest.is_absolute():
-            dest = BOARDS_DIR / dest
-    else:
-        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        dest = BOARDS_DIR / f"board-{stamp}.png"
-    if dest.suffix != ".png":
-        dest = dest.with_suffix(".png")
+    dest = sandboxed(BOARDS_DIR, path, ".png", "board")
     dest.write_bytes(to_png(board, orientation=orientation, size=size))
     return {"path": str(dest), "size": size}
 
@@ -108,17 +98,7 @@ def save_board_svg(
     path: Optional[str] = None,
     orientation: str = "blancas",
 ) -> dict:
-    """Guarda el SVG en boards/. Auto-nombre si no se da ruta."""
-    import datetime
-    BOARDS_DIR.mkdir(parents=True, exist_ok=True)
-    if path:
-        dest = Path(path)
-        if not dest.is_absolute():
-            dest = BOARDS_DIR / dest
-    else:
-        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        dest = BOARDS_DIR / f"board-{stamp}.svg"
-    if dest.suffix != ".svg":
-        dest = dest.with_suffix(".svg")
+    """Guarda el SVG en boards/ (solo ese directorio)."""
+    dest = sandboxed(BOARDS_DIR, path, ".svg", "board")
     dest.write_text(to_svg(board, orientation=orientation), encoding="utf-8")
     return {"path": str(dest)}

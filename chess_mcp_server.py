@@ -11,7 +11,37 @@ from mcp.server.mcpserver import MCPServer
 
 import chess
 
+from pathlib import Path
+from threading import Lock
+
 from chess_engine import get_engine, close_engine
+
+
+_ENGINE_LOCK = Lock()  # las tools síncronas corren en hilos: mutaciones bajo lock
+
+
+def _io_guard(fn):
+    """Las tools de ficheros nunca devuelven tracebacks al cliente."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except (ValueError, OSError, RuntimeError) as exc:
+            return f"❌ {exc}"
+    return wrapper
+
+
+def _locked(fn):
+    """Serializa las mutaciones de partida (el SDK ejecuta tools en hilos)."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _ENGINE_LOCK:
+            return fn(*args, **kwargs)
+    return wrapper
 
 
 mcp = MCPServer(
@@ -28,7 +58,7 @@ mcp = MCPServer(
         "list_personalities/set_personality para elegir rival (arquetipos y leyendas), "
         "lookup_history/opening_info/search_classics para la base histórica, "
         "get_board_3d/list_3d_styles para el visor 3D animado, "
-        "undo para deshacer, resign para abandonar."
+        "undo para deshacer, resign para abandonar, claim_draw para tablas."
     ),
 )
 
@@ -40,6 +70,7 @@ def _format_state(state: dict) -> str:
         "checkmate": "🏁 JAQUE MATE",
         "stalemate": "🤝 AHOGADO",
         "draw": "🤝 TABLAS",
+        "finished": "🏁 FINAL",
         "check": "⚠️ JAQUE",
         "resigned": "🏳️ ABANDONO",
         "in_progress": "",
@@ -63,14 +94,20 @@ def _format_state(state: dict) -> str:
 
 @mcp.tool(
     name="new_game",
-    description="Inicia una nueva partida. Opcionalmente ajusta ELO (1320-3190) y personalidad (ver list_personalities). Si das personalidad, fija su ELO salvo elo explícito distinto de 1600.",
+    description=("Inicia una nueva partida contra 'club' (ELO 1600) por defecto. "
+                "Con personality se usa su ELO salvo elo explícito distinto de 1600. "
+                "Con elo explícito se usa esa fuerza con el estilo de la personalidad."),
 )
-def new_game(elo: int = 1600, personality: str = "") -> str:
+@_locked
+def new_game(elo: int = 1600, personality: str = "club") -> str:
     engine = get_engine()
-    state = engine.reset(
-        elo=elo if (elo != 1600 or not personality) else None,
-        personality=personality or None,
-    )
+    try:
+        state = engine.reset(
+            elo=elo if elo != 1600 else None,
+            personality=personality or None,
+        )
+    except KeyError as exc:
+        return f"❌ {exc}"
     return (f"♟️ Nueva partida vs {state['personality_name']} (ELO {state['elo']})\n\n"
             f"{state['board_ascii']}")
 
@@ -79,12 +116,19 @@ def new_game(elo: int = 1600, personality: str = "") -> str:
     name="make_move",
     description="Juega un movimiento en SAN (e4, Nf3, O-O) o UCI (e2e4). El bot responde automáticamente. Incluye feedback del entrenador.",
 )
+@_locked
 def make_move(move: str) -> str:
     engine = get_engine()
     result = engine.player_move(move)
     if "error" in result:
         legal = ", ".join(result.get("legal_moves", [])[:15])
         return f"❌ {result['error']}\n\nMovimientos legales (primeros 15): {legal}..."
+    # Si el visor 2D ya existe, se regenera para el auto-refresh (best effort)
+    try:
+        if (Path(__file__).parent / "boards" / "viewer.html").exists():
+            engine.save_viewer()
+    except Exception:
+        pass
     return _format_state(result)
 
 
@@ -124,17 +168,33 @@ def get_legal_moves() -> str:
 
 @mcp.tool(
     name="undo",
-    description="Deshace la última jugada completa (la tuya y la del bot).",
+    description="Deshace la última ronda (la tuya y la del bot). También reabre tras mate o abandono.",
 )
+@_locked
 def undo() -> str:
     state = get_engine().undo()
+    if "error" in state:
+        return f"❌ {state['error']}"
     return f"↩️ Jugada deshecha.\n\n{state['board_ascii']}"
+
+
+@mcp.tool(
+    name="claim_draw",
+    description="Reclama tablas por triple repetición o 50 movimientos, si aplica.",
+)
+@_locked
+def claim_draw() -> str:
+    result = get_engine().claim_draw()
+    if "error" in result:
+        return f"❌ {result['error']}"
+    return f"🤝 Tablas por {result.get('claim', '?')}. Resultado: {result['result']}"
 
 
 @mcp.tool(
     name="resign",
     description="Abandona la partida actual (pierdes 0-1).",
 )
+@_locked
 def resign() -> str:
     state = get_engine().resign()
     return f"🏳️ Has abandonado. Resultado: {state['result']}"
@@ -223,8 +283,9 @@ def export_pgn() -> str:
 
 @mcp.tool(
     name="save_game",
-    description="Guarda la partida en games/ (auto-nombre con fecha) o en la ruta dada. Devuelve el path.",
+    description="Guarda la partida en games/ (auto-nombre con fecha) o en el nombre dado. Devuelve el path.",
 )
+@_io_guard
 def save_game(path: str = "") -> str:
     res = get_engine().save_game(path or None)
     return f"💾 Partida guardada ({res['moves']} jugadas): {res['path']}"
@@ -232,8 +293,9 @@ def save_game(path: str = "") -> str:
 
 @mcp.tool(
     name="load_game",
-    description="Carga la primera partida de un PGN (ruta absoluta o nombre en games/) y restaura el tablero.",
+    description="Carga la primera partida de un PGN de games/ y restaura el tablero.",
 )
+@_io_guard
 def load_game(path: str) -> str:
     result = get_engine().load_game(path)
     if "error" in result:
@@ -257,6 +319,7 @@ def list_games() -> str:
     name="get_board_svg",
     description="Genera el tablero 2D como SVG (última jugada y jaque resaltados), lo guarda en boards/ y devuelve la ruta. orientation: blancas/negras.",
 )
+@_io_guard
 def get_board_svg(orientation: str = "blancas") -> str:
     res = get_engine().save_board_image(orientation=orientation)
     return f"🖼️ Tablero SVG: {res['path']}"
@@ -266,6 +329,7 @@ def get_board_svg(orientation: str = "blancas") -> str:
     name="save_board_image",
     description="Guarda el tablero SVG en la ruta dada (o auto-nombre en boards/). Devuelve el path.",
 )
+@_io_guard
 def save_board_image(path: str = "", orientation: str = "blancas") -> str:
     res = get_engine().save_board_image(path or None, orientation=orientation)
     return f"🖼️ Tablero guardado: {res['path']}"
@@ -275,6 +339,7 @@ def save_board_image(path: str = "", orientation: str = "blancas") -> str:
     name="get_board_png",
     description="Genera el tablero como PNG raster (960px por defecto, 256-2048), lo guarda en boards/ y devuelve la ruta con el tamaño.",
 )
+@_io_guard
 def get_board_png(orientation: str = "blancas", size: int = 960) -> str:
     try:
         res = get_engine().save_board_png(orientation=orientation, size=size)
@@ -287,6 +352,7 @@ def get_board_png(orientation: str = "blancas", size: int = 960) -> str:
     name="save_board_png",
     description="Guarda el tablero PNG en la ruta dada (o auto-nombre en boards/). orientation: blancas/negras, size 256-2048.",
 )
+@_io_guard
 def save_board_png(path: str = "", orientation: str = "blancas", size: int = 960) -> str:
     try:
         res = get_engine().save_board_png(path or None, orientation=orientation, size=size)
@@ -299,6 +365,7 @@ def save_board_png(path: str = "", orientation: str = "blancas", size: int = 960
     name="get_board_viewer",
     description="Genera el visor HTML (splash de carga + tablero + jugadas + coach, auto-refresh) y devuelve la ruta para abrirlo en el navegador.",
 )
+@_io_guard
 def get_board_viewer(refresh: int = 5) -> str:
     res = get_engine().save_viewer(refresh=refresh)
     return f"🌐 Visor: {res['path']} (ábrelo en el navegador)"
@@ -320,6 +387,7 @@ def list_3d_styles() -> str:
     name="get_board_3d",
     description="Genera el visor 3D animado (Three.js, reproduce la partida, jaque pulsante) y devuelve la ruta. style: clasico/antiguo/cyberpunk/wizard.",
 )
+@_io_guard
 def get_board_3d(style: str = "clasico", refresh: int = 5) -> str:
     try:
         res = get_engine().save_viewer3d(style=style, refresh=refresh)
@@ -344,6 +412,7 @@ def list_personalities() -> str:
     name="set_personality",
     description="Cambia la personalidad del rival (fija su ELO y estilo) e inicia partida nueva.",
 )
+@_locked
 def set_personality(key: str) -> str:
     from personalities import get_personality
     try:
@@ -409,7 +478,6 @@ def search_classics(player: str) -> str:
 
 
 if __name__ == "__main__":
-    try:
-        mcp.run_stdio_async()
-    finally:
-        close_engine()
+    import atexit
+    atexit.register(close_engine)
+    mcp.run()

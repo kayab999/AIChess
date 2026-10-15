@@ -13,13 +13,15 @@ from typing import Optional
 
 import chess
 
+from chess_engine import BOARDS_DIR, sandboxed
+
 ASSETS_DIR = Path(__file__).parent / "assets"
-BOARDS_DIR = Path(__file__).parent / "boards"
 
 
 def _data_uri(path: Path) -> str:
     raw = path.read_bytes()
-    return "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+    mime = "image/jpeg" if raw[:2] == b"\xff\xd8" else "image/png"
+    return f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
 
 
 def render_viewer(
@@ -90,6 +92,14 @@ def render_viewer(
 </head>
 <body>
 <div id="splash"><img src="{splash}" alt="AI Chess"></div>
+<script>
+// El splash solo tapa en la primera carga; los auto-refresh lo saltan.
+try {{ if (sessionStorage.getItem('aichess_seen')) {{
+  document.getElementById('splash').style.display = 'none';
+}} else {{
+  sessionStorage.setItem('aichess_seen', '1');
+}} }} catch (e) {{}}
+</script>
 <main>
   <div class="board">{svg}</div>
   <aside>
@@ -117,15 +127,9 @@ def save_viewer(
     path: Optional[str] = None,
     refresh: int = 5,
 ) -> dict:
-    """Guarda el visor en boards/viewer.html (nombre fijo, sobrescribe)."""
+    """Guarda el visor en boards/viewer.html (solo ese directorio)."""
     import datetime
-    BOARDS_DIR.mkdir(parents=True, exist_ok=True)
-    if path:
-        dest = Path(path)
-        if not dest.is_absolute():
-            dest = BOARDS_DIR / dest
-    else:
-        dest = BOARDS_DIR / "viewer.html"
+    dest = sandboxed(BOARDS_DIR, path or "viewer.html", ".html", "viewer")
     if dest.suffix != ".html":
         dest = dest.with_suffix(".html")
     generated = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")

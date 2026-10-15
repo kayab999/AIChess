@@ -23,32 +23,33 @@ import chess.engine
 import chess.pgn
 
 sys.path.insert(0, str(Path(__file__).parent))
-from chess_engine import find_engine
+from chess_engine import find_engine, pov_cp
 from personalities import book_move, choose_move, get_personality
-
-
-def _pov_cp(score, turn: chess.Color) -> float:
-    if score is None:
-        return 0.0
-    pov = score.pov(turn) if hasattr(score, "pov") else score
-    if pov.is_mate():
-        m = pov.mate() or 0
-        return 100000.0 if m > 0 else -100000.0
-    return float(pov.score() or 0)
 
 
 class Rival:
     """Una personalidad con su propio proceso Stockfish."""
 
-    def __init__(self, key: str, time_limit: float, seed: int):
-        self.p = get_personality(key)
-        self.time_limit = time_limit
-        self.rng = random.Random(seed)
+    def _spawn(self) -> None:
         self.engine = chess.engine.SimpleEngine.popen_uci(find_engine())
         try:
             self.engine.configure({"UCI_LimitStrength": True, "UCI_Elo": self.p.elo})
         except chess.engine.EngineError:
             pass
+
+    def __init__(self, key: str, time_limit: float, seed: int):
+        self.p = get_personality(key)
+        self.time_limit = time_limit
+        self.base_seed = seed
+        self.rng = random.Random(seed)
+        self.engine = None
+        self._spawn()
+
+    def new_game(self, game_index: int) -> None:
+        """Proceso fresco (hash limpio) y semilla por partida."""
+        self.close()
+        self._spawn()
+        self.rng = random.Random(f"{self.base_seed}:{game_index}")
 
     def select(self, board: chess.Board, history_san: list[str]) -> chess.Move:
         san = book_move(history_san, self.p.openings, self.rng)
@@ -70,7 +71,7 @@ class Rival:
             for info in infos:
                 pv = info.get("pv", [])
                 if pv:
-                    cands.append((pv[0], _pov_cp(info.get("score"), board.turn)))
+                    cands.append((pv[0], pov_cp(info.get("score"), board.turn)))
             if cands:
                 pick = choose_move(board, cands, self.p, self.rng)
                 if pick in board.legal_moves:
@@ -115,8 +116,8 @@ def play_game(white: Rival, black: Rival, max_ply: int = 120) -> dict:
     elif (board.is_stalemate() or board.is_insufficient_material()
           or board.is_seventyfive_moves() or board.is_fivefold_repetition()):
         result = "1/2-1/2"
-    else:  # adjudicación por evaluación
-        ev = white.quick_eval_white(board)
+    else:  # adjudicación por consenso de ambos motores (vista blancas)
+        ev = (white.quick_eval_white(board) + black.quick_eval_white(board)) / 2.0
         result = "1-0" if ev > 1.5 else ("0-1" if ev < -1.5 else "1/2-1/2")
 
     game = chess.pgn.Game()
@@ -165,6 +166,8 @@ def main() -> None:
             for j in range(i + 1, len(keys)):
                 for g in range(args.games):
                     w, b = (keys[i], keys[j]) if g % 2 == 0 else (keys[j], keys[i])
+                    rivals[w].new_game(n)
+                    rivals[b].new_game(n)
                     r = play_game(rivals[w], rivals[b], args.max_ply)
                     n += 1
                     if r["result"] == "1-0":
