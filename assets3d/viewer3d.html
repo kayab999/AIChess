@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+__REFRESH_META__
+<title>♟️ AI Chess 3D — __STYLE__</title>
+<link rel="icon" href="../assets/icon.png">
+<style>
+  :root { --bg: #050b16; --accent: #35e0ff; --txt: #d7e6f5; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--txt);
+               font-family: system-ui, sans-serif; overflow: hidden; }
+  #scene { position: fixed; inset: 0; }
+  #hud { position: fixed; top: 12px; left: 12px; z-index: 5;
+         background: rgba(8, 20, 38, .82); border: 1px solid rgba(53,224,255,.35);
+         border-radius: 10px; padding: 10px 14px; max-width: 340px; }
+  #hud h1 { margin: 0 0 6px; font-size: 1.05em; color: var(--accent); }
+  #hud .row { font-size: .85em; margin: 3px 0; }
+  #hud .moves { font-family: monospace; font-size: .8em; line-height: 1.6;
+                max-height: 5.2em; overflow: hidden; }
+  #movecount { color: var(--accent); font-size: .8em; }
+  #splash { position: fixed; inset: 0; z-index: 10; display: flex;
+            align-items: center; justify-content: center; background: #050b16;
+            animation: splashout .8s ease 1.5s forwards; pointer-events: none; }
+  #splash img { max-width: 90vw; max-height: 90vh; border-radius: 12px; }
+  @keyframes splashout { to { opacity: 0; visibility: hidden; } }
+  #hint { position: fixed; bottom: 10px; right: 14px; z-index: 5; font-size: .75em;
+          color: #5b7288; }
+</style>
+</head>
+<body>
+<div id="splash"><img src="../assets/splash.png" alt="AI Chess"></div>
+<div id="scene"></div>
+<div id="hud">
+  <h1>♟️ AI Chess 3D · __STYLE__</h1>
+  <div class="row">__STATUS__ · Turno: <b>__TURN__</b> · ELO __ELO__</div>
+  <div class="row moves">__MOVES__</div>
+  <div id="movecount">● cargando…</div>
+</div>
+<div id="hint">arrastra para orbitar · rueda para zoom · clic derecho para desplazar</div>
+<script>var AICHESS_DATA = __DATA_JSON__;</script>
+<script src="../assets3d/vendor/three.min.js"></script>
+<script src="../assets3d/vendor/OrbitControls.js"></script>
+<script src="../assets3d/pieces.js"></script>
+<script src="../assets3d/board3d.js"></script>
+</body>
+</html>

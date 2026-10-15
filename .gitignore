@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+# Artefactos generados (tableros, partidas guardadas)
+boards/
+games/*.pgn
