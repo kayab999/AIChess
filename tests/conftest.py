@@ -20,6 +20,8 @@ def engine():
 
 @pytest.fixture(autouse=True)
 def _clean_test_artifacts():
+    for d in ("games", "boards"):
+        (ROOT / d).mkdir(parents=True, exist_ok=True)
     yield
     for d in ("games", "boards"):
         p = ROOT / d

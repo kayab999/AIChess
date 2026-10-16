@@ -6,7 +6,7 @@ from pathlib import Path
 import chess.engine
 
 ROOT = Path(__file__).parent.parent
-PY = str(ROOT / ".venv" / "bin" / "python")
+PY = sys.executable
 
 
 def test_rival_reseeds_and_renews():

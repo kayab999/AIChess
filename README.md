@@ -1,5 +1,7 @@
 # ♟️ AI Chess — MCP Ready
 
+![CI](https://github.com/kayab999/AIChess/actions/workflows/ci.yml/badge.svg)
+
 Juega al ajedrez contra Stockfish 16 desde terminal o desde cualquier agente compatible con MCP.
 
 ![icono](assets/icon.png)
