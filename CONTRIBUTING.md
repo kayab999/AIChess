@@ -1,5 +1,11 @@
 # Contribuir a AIChess
 
+> ❄️ **Congelación temporal de features**: hasta recoger 2 semanas de
+> señal real de usuarios (ver `docs/ROADMAP.md`), solo se aceptan fixes,
+> tests y docs. Las ideas nuevas van como issues para discutir.
+
+## Regla de oro
+
 ## Regla de oro
 
 **Toda feature entra con tests o no entra.** La suite (`tests/`) es el
