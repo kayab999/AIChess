@@ -8,7 +8,7 @@ import pytest
 
 ROOT = Path(__file__).parent.parent
 SERVER = str(ROOT / "chess_mcp_server.py")
-PY = str(ROOT / ".venv" / "bin" / "python")
+PY = sys.executable  # mismo intérprete que ejecuta pytest (venv local o CI)
 
 EXPECTED_TOOLS = {
     "new_game", "make_move", "get_board", "get_status", "get_legal_moves",
