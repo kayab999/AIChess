@@ -121,3 +121,40 @@ def test_20_sin_jugada_previa_es_error():
         assert "error" in e.build_coach_context()
     finally:
         e.close()
+
+
+def test_21_escala_mate_coherente_en_todos_los_flujos():
+    """pov_cp, _quick_eval y evaluate_move hablan la misma escala (±10000)."""
+    import chess.engine as ce
+    from chess_engine import ChessEngine, pov_cp
+    mated_black = chess.Board("r1bqkbnr/pppp1Qpp/2n5/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 1")
+    assert mated_black.is_checkmate()
+    assert pov_cp(ce.PovScore(ce.Mate(1), chess.WHITE), chess.WHITE) == 10000.0
+    e = ChessEngine(seed=21)
+    try:
+        e.board = mated_black
+        ev, _ = e._quick_eval()
+        assert ev == 10000.0  # misma magnitud que pov_cp
+        fb = evaluate_move(mated_black, mated_black, 500.0, 10000.0, "Qxf7#", 4)
+        assert fb["veredicto"] == "mate"  # el umbral >=9000 lo reconoce
+    finally:
+        e.close()
+
+
+def test_22_mate_real_con_stockfish_y_contexto():
+    """Integración completa: mate dado al motor real + contexto híbrido."""
+    from chess_engine import ChessEngine
+    e = ChessEngine(seed=22)
+    try:
+        for san in ("e4", "e5", "Bc4", "Nc6", "Qh5", "Nf6"):
+            e.board.push_san(san)
+        e._rebuild_history()
+        r = e.player_move("Qxf7#")
+        assert r["status"] == "checkmate" and r["result"] == "1-0"
+        assert r["coach"]["veredicto"] == "mate"
+        assert r["coach"]["cp_loss"] == 0.0
+        ctx = e.build_coach_context()
+        assert "mate" in ctx["prompt"].lower()
+        assert ctx["context"]["veredicto"] == "mate"
+    finally:
+        e.close()

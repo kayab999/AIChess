@@ -84,3 +84,24 @@ Estrategia completa de consolidación: `docs/TOOLS.md`.
 > hint 2
 💡 Nivel 2: Mira la zona de d4 como candidata.
 ```
+
+Todo lo anterior es el **modo heurístico** (determinista, siempre
+disponible). Para el **modo híbrido**, el agente pide el contexto y
+redacta él mismo el consejo:
+
+```
+> build_coach_context
+Eres un entrenador de ajedrez...
+- Posición (FEN): rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2
+- Veredicto del motor: bien (12cp) | Mejor era: e4
+- Motivos detectados: caballo sin desarrollar; ...
+```
+
+```json
+{"fen": "...", "veredicto": "bien", "cp_loss": 12.0, ...}
+```
+
+El agente entonces redacta el consejo final siguiendo la regla de
+ancla (no contradecir la evaluación). Sin LLM potente a mano, quédate
+con el bloque `🎓` de `make_move`.
+
