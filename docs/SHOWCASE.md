@@ -1,24 +1,64 @@
-# Publicar AIChess en directorios MCP (checklist)
+# Publicar AIChess (runbook del owner)
 
-El valor diferencial es "Chess Toolkit para Agentes" (no "otro motor").
-Ángulo de la ficha: coach local + personalidades + citas históricas.
+Ángulo: "Chess Toolkit para Agentes" — entrenador local de ajedrez vía
+MCP. Stockfish + tu LLM. Sin APIs de pago.
 
-## Directorios objetivo
+## Ficha común (copiar/pegar)
 
-1. **mcp.so** — ficha con: descripción (coach Stockfish local vía MCP),
-   categoría Games/Education, link al repo, ejemplo `new_game`/`make_move`.
-2. **GitHub topic `mcp-server`** — añadir el topic al repo + `mcp`
-   en la descripción. Mejora descubrimiento en búsquedas.
-3. **Smithery / PulseMCP** — revisar requisitos (algunos piden
-   `package.json` o Dockerfile; si lo piden, empaquetar no cambia código).
+- **Nombre**: AI Chess — entrenador de ajedrez local vía MCP
+- **Descripción**: Juega contra 15 personalidades (Stockfish 16),
+  recibe feedback educativo, citas de Fischer/Tal y tableros
+  SVG/PNG/3D. 100% local, open source (Apache-2.0).
+- **URL**: https://github.com/kayab999/AIChess
+- **Instalación** (pegar en el formulario que lo pida):
+```json
+{
+  "mcpServers": {
+    "ai-chess": {
+      "command": "/ruta/a/AIChess/.venv/bin/python",
+      "args": ["/ruta/a/AIChess/chess_mcp_server.py"],
+      "env": { "STOCKFISH_PATH": "/usr/games/stockfish" }
+    }
+  }
+}
+```
+- **Tags**: chess, coach, education, stockfish, local, spanish
 
-## Material necesario (ya existe)
+## 1. MCP Registry oficial (canónico)
 
-- GIF/sesión de ejemplo: ver `docs/AGENTS.md` (ejemplo de sesión).
-- Badges: CI verde en README.
-- Licencia: confirmar fichero LICENSE antes de publicar.
+Estado: `server.json` listo en el repo. Falta el paquete público.
 
-## No hacer todavía
+1. Publicar `aichess-mcp` 1.0.0 en PyPI (requiere cuenta + release;
+   el nombre en server.json debe coincidir).
+2. `mcp-publisher login github && mcp-publisher validate && mcp-publisher publish`
+3. Verificar la ficha en el Registry.
 
-- Cambiar nombres de tools por marketing (rompe clientes).
-- Prometer fuerza ELO exacta (el ELO es aproximado: ver README).
+## 2. mcp.so
+
+Formulario en mcp.so/submit (gratis con revisión; $39 fast-track
+opcional). Usar la ficha común + repo URL.
+
+## 3. Glama
+
+Revisar flujo vigente de alta y enviar con la ficha común.
+
+## 4. Reddit (respetando reglas)
+
+- **r/LocalLLaMA**: SOLO megathread quincenal de showcase. Reglas:
+  1/10 autopromoción, afiliación declarada ("soy el autor"),
+  texto 100% propio (prohibido copy generado por LLM), sin hype.
+  Ángulo: "entrenador de ajedrez 100% local que combina Stockfish
+  con tu LLM local vía MCP".
+- **r/chess**: leer reglas vigentes antes de postear; formato
+  show-and-tell, sin hype. Si solo admiten hilo semanal, ir ahí.
+
+Títulos propuestos (sin sensacionalismo):
+- LocalLLaMA (megathread): "AIChess: entrenador de ajedrez local (Stockfish + MCP + tu LLM), open source"
+- r/chess: solo si las reglas lo permiten; si no, no postear.
+
+## 5. Checklist pre-publicación
+
+- [ ] LICENSE Apache-2.0 en el repo (existe: `LICENSE`)
+- [ ] CI verde + tag vigente
+- [ ] `docs/DEMO.md` reproducible por un tercero
+- [ ] server.json validado contra el schema ($schema incluido)

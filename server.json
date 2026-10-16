@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.kayab999/aichess",
+  "title": "AI Chess",
+  "description": "Entrenador de ajedrez local vía MCP: juega contra 15 personalidades (Stockfish), recibe feedback educativo, citas de Fischer/Tal y tableros SVG/PNG/3D. Sin APIs de pago.",
+  "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/kayab999/AIChess",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "aichess-mcp",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

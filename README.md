@@ -8,6 +8,18 @@ Juega al ajedrez contra Stockfish 16 desde terminal o desde cualquier agente com
 > Claude Desktop, receta de entrenamiento y catálogo esencial para
 > modelos pequeños.
 
+## En 30 segundos
+
+```
+> e4
+🎓 ✅ bien (12cp): Buena jugada e4.
+> hint
+💡 Nivel 1: Controla el centro y coordina tus piezas antes de atacar.
+```
+
+Demo completa con imágenes: [`docs/DEMO.md`](docs/DEMO.md). Ficha para
+directorios: [`docs/SHOWCASE.md`](docs/SHOWCASE.md).
+
 ![icono](assets/icon.png)
 
 > Splash de carga: `assets/splash.png` (originales en raíz: `aichess.png`, `aichesssplashscreen.png`).
