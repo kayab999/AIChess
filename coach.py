@@ -193,6 +193,51 @@ def hint_level(motifs: list[str], level: int, best_move: Optional[str],
 
 
 # ---------------------------------------------------------------------------
+# Contexto para LLM cliente (coach híbrido: la tool NO llama a ningún LLM,
+# solo empaqueta datos + plantilla; el cliente redacta el consejo final)
+# ---------------------------------------------------------------------------
+
+COACH_PROMPT_TEMPLATE = """Eres un entrenador de ajedrez. Explica la última jugada en español,
+claro y breve (2-4 frases), para un jugador intermedio.
+
+REGLA DE ANCLA (obligatoria): la evaluación de Stockfish manda.
+Si dice {eval_note}, no afirmes lo contrario. Tu trabajo es explicar
+el porqué humano (táctica, planes, casillas), no reevaluar la posición.
+
+Datos:
+- Posición (FEN): {fen}
+- Turno ahora: {turn} | Última jugada: {last_move}
+- Veredicto del motor: {veredicto} ({cp_loss:.0f}cp) | Mejor era: {best_move}
+- Motivos detectados: {motivos}
+
+Redacta el consejo final."""
+
+
+def build_coach_prompt(feedback: dict, fen: str, turn: str, last_move: str) -> str:
+    """Rellena la plantilla con el feedback del motor. Puro y testeable."""
+    cp = feedback.get("cp_loss", 0.0)
+    if feedback.get("veredicto") == "mate":
+        eval_note = "jaque mate: la partida terminó"
+    elif cp >= 180:
+        eval_note = f"gran error (pierde ~{cp / 100:.1f} peones)"
+    elif cp >= 30:
+        eval_note = f"imprecisión leve (~{cp / 100:.1f} peones)"
+    else:
+        eval_note = "jugada correcta, ventaja mantenida"
+    motifs = feedback.get("motivos") or ["ninguno"]
+    return COACH_PROMPT_TEMPLATE.format(
+        eval_note=eval_note,
+        fen=fen,
+        turn=turn,
+        last_move=last_move or "—",
+        veredicto=feedback.get("veredicto", "?"),
+        cp_loss=cp,
+        best_move=feedback.get("best_move") or "—",
+        motivos="; ".join(motifs),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Evaluación completa (llamada por el engine)
 # ---------------------------------------------------------------------------
 

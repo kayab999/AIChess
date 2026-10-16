@@ -229,7 +229,7 @@ def hint(level: int = 1) -> str:
 
 @mcp.tool(
     name="explain_move",
-    description="Explica por qué la última jugada del usuario fue buena o mala (veredicto + pérdida + consejo).",
+    description="Explica por qué la última jugada fue buena o mala (veredicto + pérdida + consejo).",
 )
 def explain_move() -> str:
     info = get_engine().explain_last()
@@ -240,6 +240,20 @@ def explain_move() -> str:
         f"Pérdida: {info.get('cp_loss',0):.0f} centipeones\n"
         f"Consejo: {info.get('consejo','')}"
     )
+
+
+@mcp.tool(
+    name="build_coach_context",
+    description=("Empaqueta FEN, evaluación y motivos + plantilla de prompt para que "
+                 "TU (el LLM cliente) redactes el consejo final. No llama a ningún LLM."),
+)
+@_locked
+def build_coach_context() -> str:
+    import json
+    res = get_engine().build_coach_context()
+    if "error" in res:
+        return f"❌ {res['error']}"
+    return f"{res['prompt']}\n\n```json\n{json.dumps(res['context'], ensure_ascii=False)}\n```"
 
 
 @mcp.tool(

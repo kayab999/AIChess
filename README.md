@@ -4,6 +4,10 @@
 
 Juega al ajedrez contra Stockfish 16 desde terminal o desde cualquier agente compatible con MCP.
 
+> **¿Eres un agente?** Lee [`docs/AGENTS.md`](docs/AGENTS.md): conexión en
+> Claude Desktop, receta de entrenamiento y catálogo esencial para
+> modelos pequeños.
+
 ![icono](assets/icon.png)
 
 > Splash de carga: `assets/splash.png` (originales en raíz: `aichess.png`, `aichesssplashscreen.png`).
@@ -72,6 +76,7 @@ Registro en cliente MCP (Claude Desktop / genérico):
 | `analyze(depth=15)` | Evaluación + mejor jugada |
 | `hint(level=1)` | Pista 1=idea, 2=zona, 3=exacta (auto-escala) |
 | `explain_move` | Veredicto + pérdida + consejo última jugada |
+| `build_coach_context` | Contexto + prompt para que tu LLM redacte el consejo (no llama a ningún LLM) |
 | `coach_status` | Colgadas, desarrollo, seguridad rey |
 | `toggle_coach(enabled)` | Activa/desactiva feedback automático |
 | `export_pgn` | Partida actual en PGN estándar |
