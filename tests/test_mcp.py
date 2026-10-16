@@ -13,6 +13,7 @@ PY = sys.executable  # mismo intérprete que ejecuta pytest (venv local o CI)
 EXPECTED_TOOLS = {
     "new_game", "make_move", "get_board", "get_status", "get_legal_moves",
     "undo", "resign", "claim_draw", "analyze", "hint", "explain_move",
+    "build_coach_context",
     "coach_status", "toggle_coach", "export_pgn", "save_game", "load_game",
     "list_games", "get_board_svg", "save_board_image", "get_board_png",
     "save_board_png", "get_board_viewer", "list_personalities",

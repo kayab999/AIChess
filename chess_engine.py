@@ -82,7 +82,8 @@ def _elo_blunder_bonus(elo: int) -> float:
 
 
 def pov_cp(score, turn: chess.Color) -> float:
-    """Score UCI -> centipeones relativos al bando que mueve (mate=±100000)."""
+    """Score UCI -> centipeones relativos al bando que mueve (mate=±10000,
+    misma escala que el coach)."""
     if score is None:
         return 0.0
     try:
@@ -91,7 +92,7 @@ def pov_cp(score, turn: chess.Color) -> float:
         pov = score
     if pov.is_mate():
         m = pov.mate() or 0
-        return 100000.0 if m > 0 else -100000.0
+        return 10000.0 if m > 0 else -10000.0
     return float(pov.score() or 0)
 
 
@@ -524,6 +525,33 @@ class ChessEngine:
         if not self.last_coach_feedback:
             return {"error": "No hay jugada previa para explicar (juega primero o el coach está desactivado)"}
         return self.last_coach_feedback
+
+    def build_coach_context(self) -> dict:
+        """Contexto + plantilla para que el LLM cliente redacte el consejo.
+
+        La tool NO llama a ningún LLM: empaqueta FEN, evaluación y motivos.
+        """
+        from coach import build_coach_prompt
+        fb = self.last_coach_feedback
+        if not fb:
+            return {"error": "No hay jugada previa (juega primero con make_move)"}
+        moves = self.state.moves_history
+        prompt = build_coach_prompt(
+            fb,
+            fen=self.board.fen(),
+            turn="blancas" if self.board.turn else "negras",
+            last_move=moves[-1] if moves else "",
+        )
+        return {
+            "prompt": prompt,
+            "context": {
+                "fen": self.board.fen(),
+                "veredicto": fb.get("veredicto"),
+                "cp_loss": fb.get("cp_loss"),
+                "best_move": fb.get("best_move"),
+                "motivos": fb.get("motivos"),
+            },
+        }
 
     def toggle_coach(self, enabled: bool) -> dict:
         """Activa/desactiva el modo entrenador."""
